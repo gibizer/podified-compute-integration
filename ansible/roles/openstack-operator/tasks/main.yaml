@@ -1,0 +1,61 @@
+- name: deploy openstack with meta operator
+  shell:
+    chdir: ~/upstream/git/openstack-k8s-operators/install_yamls
+    executable: /bin/bash
+    cmd: |
+      source ~/crc-env.source
+      #export OPENSTACK_REPO=https://github.com/gibizer/openstack-operator.git
+      #export OPENSTACK_BRANCH=integrate-nova
+      #export OPENSTACK_IMG=quay.io/gibi/openstack-operator-index:v0.0.5
+      make crc_storage
+      make namespace
+      make input
+      make openstack
+      sleep 60
+      make openstack_deploy
+  tags:
+    - openstack-operator
+
+- name: Wait until glance-api is up
+  shell:
+    executable: /bin/bash
+    cmd: |
+      source ~/crc-env.source
+      openstack image list
+  retries: 15
+  delay: 20
+  register: result
+  until: result.rc == 0
+  tags:
+    - openstack-operator
+
+- name: Wait until nova-api is up
+  shell:
+    executable: /bin/bash
+    cmd: |
+      source ~/crc-env.source
+      openstack flavor list
+  retries: 15
+  delay: 20
+  register: result
+  until: result.rc == 0
+  tags:
+    - openstack-operator
+
+- name: create flavor
+  shell:
+    executable: /bin/bash
+    cmd: |
+      source ~/crc-env.source
+      openstack flavor create --vcpus 1 --disk 0 --ram 512 c1
+  tags:
+    - openstack-operator
+
+- name: upload cirros image to glance
+  shell:
+    executable: /bin/bash
+    cmd: |
+      source ~/crc-env.source
+      wget http://download.cirros-cloud.net/0.5.2/cirros-0.5.2-x86_64-disk.img
+      openstack image create --container-format bare --disk-format qcow2 cirros-0.5.2-x86_64-disk --file cirros-0.5.2-x86_64-disk.img
+

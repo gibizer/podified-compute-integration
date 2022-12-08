@@ -1,0 +1,52 @@
+- name: expose rabbitmq and mariadb for nova-scheduler
+  shell:
+    executable: /bin/bash
+    cmd: |
+      source ~/crc-env.source
+      oc expose -n openstack pod/rabbitmq-server-0  --name rabbitmq-public --type NodePort || true
+      # NOTE(gibi): we need to change the labels on the service as otherwise lib-common won't know which one to use
+      oc expose -n openstack pod/mariadb-openstack  --name mariadb-openstack-public --type NodePort --port 3306 --target-port 3306 --labels='owner=mariadb-operator' || true
+
+- name: Update cell_mappings DB table to use the exposed mariadb service as external nova-scheduler needs it
+  shell:
+    executable: /bin/bash
+    cmd: |
+      source ~/crc-env.source
+      port=`oc get -o yaml svc/mariadb-openstack-public -o jsonpath="{.spec.ports[0].nodePort}"`
+      ip=`crc ip`
+      oc rsh -t mariadb-openstack mysql -u root --password=12345678 -e "update nova_api.cell_mappings set database_connection = replace(database_connection, 'openstack',\"$ip:$port\");"
+
+- name: provide nova-cpu.conf
+  copy:
+    src: "../../../assets/nova-sch.conf"
+    dest: "/tmp/stack/nova"
+
+- name: Update nova-sch.conf with transport_url and db connection
+  shell:
+    executable: /bin/bash
+    cmd: |
+      source ~/crc-env.source
+      # scheduler
+      port=`oc get -o=jsonpath='{.spec.ports[?(@.targetPort==5672)].nodePort}' service/rabbitmq-public`
+      ip=`crc ip`
+      cell0_transport=`oc rsh -c nova-api-api nova-api-0 grep -e "transport_url" /etc/nova/nova.conf | head -n 1 | cut -d ' ' -f3 | sed s/rabbitmq.openstack.svc:5672/$ip:$port/g | cut -d '=' -f2`
+      crudini --set /tmp/stack/nova/nova-sch.conf DEFAULT transport_url "$cell0_transport"
+      
+      port=`oc get -o yaml svc/mariadb-openstack-public -o jsonpath="{.spec.ports[0].nodePort}"`
+      api_db="mysql+pymysql://nova_api:12345678@$ip:$port/nova_api"
+      crudini --set /tmp/stack/nova/nova-sch.conf api_database connection "$api_db"
+
+      cell0_db="mysql+pymysql://nova_cell0:12345678@$ip:$port/nova_cell0"
+      crudini --set /tmp/stack/nova/nova-sch.conf database connection "$cell0_db"
+  tags:
+    - config
+
+- name: Run nova scheduler
+  shell:
+    executable: /bin/bash
+    cmd: |
+      source ~/crc-env.source
+      cd /tmp/stack/nova
+      source .venv/bin/activate
+      screen -S stack -dm bash -c 'nova-scheduler --config-file nova-sch.cfg'
+

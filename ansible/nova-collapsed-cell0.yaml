@@ -1,0 +1,8 @@
+---
+- name: nova-collapsed-cell0
+  hosts: all
+  roles:
+    - crc
+    - openstack-operator
+    - collapse-cell0
+    - collapsed-compute

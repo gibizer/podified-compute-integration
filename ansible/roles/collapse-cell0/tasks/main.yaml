@@ -1,0 +1,19 @@
+- name: create cell1 and collapse cell0
+  shell:
+    executable: /bin/bash
+    cmd: |
+      source ~/crc-env.source
+      wget https://raw.githubusercontent.com/gibizer/openstack-operator/collapsed-cell0-sample/config/samples/core_v1beta1_openstackcontrolplane.yaml
+      oc apply -f core_v1beta1_openstackcontrolplane.yaml
+
+- name: Wait until nova-cell1-conductor-0 is up
+  shell:
+    executable: /bin/bash
+    cmd: |
+      source ~/crc-env.source
+      oc get all | grep nova-cell1-conductor-0 | grep Running
+  retries: 15
+  delay: 20
+  register: result
+  until: result.rc == 0
+

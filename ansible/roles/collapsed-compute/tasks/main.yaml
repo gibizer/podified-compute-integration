@@ -1,0 +1,67 @@
+- name: expose rabbitmq for nova-compute
+  shell:
+    executable: /bin/bash
+    cmd: |
+      source ~/crc-env.source
+      oc expose -n openstack pod/rabbitmq-server-0  --name rabbitmq-public --type NodePort || true
+
+- name: create nova instance dir
+  shell:
+    executable: /bin/bash
+    cmd: |
+      mkdir -p /tmp/stack/data/nova/instances
+      mkdir -p /tmp/stack/nova/
+      chmod og+rwx -R /tmp/stack/
+
+- name: provide rootwrap.conf
+  copy:
+    src: "../../../assets/rootwrap.conf"
+    dest: "/tmp/stack/nova"
+
+- name: install nova in venv
+  shell:
+    executable: /bin/bash
+    cmd: |
+      cd /tmp/stack/nova
+      python3 -m venv .venv
+      source .venv/bin/activate
+      pip install wheel 'nova<27.0.0' libvirt-python pymysql
+
+- name: provide nova-cpu.conf
+  copy:
+    src: "../../../assets/nova-cpu.conf"
+    dest: "/tmp/stack/nova"
+
+- name: Update nova-cpu.conf with transport_url
+  shell:
+    executable: /bin/bash
+    cmd: |
+      source ~/crc-env.source
+      # compute
+      port=`oc get -o=jsonpath='{.spec.ports[?(@.targetPort==5672)].nodePort}' service/rabbitmq-public`
+      ip=`crc ip`
+      cell1_transport=`oc rsh nova-cell1-conductor-0 grep -e "transport_url" /etc/nova/nova.conf | head -n 1 | cut -d ' ' -f3 | sed s/rabbitmq.openstack.svc:5672/$ip:$port/g | cut -d '=' -f2`
+      echo "!!!"
+      echo "$transport_url"
+      echo "!!!"
+      crudini --set /tmp/stack/nova/nova-cpu.conf DEFAULT transport_url "$cell1_transport"
+  tags:
+    - config
+
+- name: Run nova compute
+  shell:
+    executable: /bin/bash
+    cmd: |
+      source ~/crc-env.source
+      cd /tmp/stack/nova
+      source .venv/bin/activate
+      screen -S stack -d -m bash -c 'nova-compute --config-file nova-cpu.conf ; read'
+
+- name: Map compute to cell1
+  shell:
+    executable: /bin/bash
+    cmd: |
+      source ~/crc-env.source      
+      sleep 60
+      oc rsh nova-cell1-conductor-0 nova-manage cell_v2 discover_hosts
+

@@ -1,0 +1,8 @@
+---
+- name: nova-collapsed-rabbitmq
+  hosts: all
+  roles:
+    - crc
+    - openstack-operator
+    - scheduler
+    - compute
